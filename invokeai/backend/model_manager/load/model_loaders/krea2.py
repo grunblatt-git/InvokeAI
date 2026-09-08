@@ -288,7 +288,7 @@ class Krea2DiffusersModel(GenericDiffusersLoader):
 
         # Krea-2 prefers bfloat16; use a safe dtype based on target device capabilities.
         target_device = TorchDevice.choose_torch_device()
-        dtype = TorchDevice.choose_bfloat16_safe_dtype(target_device)
+        dtype = TorchDevice.choose_krea2_denoise_dtype(target_device)
 
         extra_kwargs: dict[str, Any] = {}
         if submodel_type is SubModelType.TextEncoder:
@@ -348,7 +348,7 @@ class Krea2CheckpointModel(ModelLoader):
         model_path = Path(config.path)
 
         target_device = TorchDevice.choose_torch_device()
-        model_dtype = TorchDevice.choose_bfloat16_safe_dtype(target_device)
+        model_dtype = TorchDevice.choose_krea2_denoise_dtype(target_device)
 
         sd = load_file(model_path)
         sd = _strip_comfyui_prefix(sd)
@@ -461,7 +461,7 @@ class Qwen3VLEncoderLoader(ModelLoader):
                 return AutoTokenizer.from_pretrained(tokenizer_path, local_files_only=True, extra_special_tokens={})
             case SubModelType.TextEncoder:
                 target_device = TorchDevice.choose_torch_device()
-                model_dtype = TorchDevice.choose_bfloat16_safe_dtype(target_device)
+                model_dtype = TorchDevice.choose_krea2_denoise_dtype(target_device)
                 te_config = _normalize_qwen3vl_rope_config(
                     AutoConfig.from_pretrained(text_encoder_path, local_files_only=True)
                 )
@@ -580,7 +580,7 @@ class Qwen3VLEncoderCheckpointLoader(ModelLoader):
 
         model_path = Path(config.path)
         target_device = TorchDevice.choose_torch_device()
-        model_dtype = TorchDevice.choose_bfloat16_safe_dtype(target_device)
+        model_dtype = TorchDevice.choose_krea2_denoise_dtype(target_device)
 
         sd = load_file(str(model_path))
         # Detect an fp8 source (ComfyUI 'scaled fp8' weight_scale keys, or raw float8 weights) BEFORE
@@ -623,3 +623,111 @@ class Qwen3VLEncoderCheckpointLoader(ModelLoader):
             )
 
         return model
+<<<<<<< Updated upstream
+=======
+
+@ModelLoaderRegistry.register(base=BaseModelType.Any, type=ModelType.Qwen3VLEncoder, format=ModelFormat.GGUFQuantized)
+class Qwen3VLEncoderGGUFLoader(ModelLoader):
+    """Loads a GGUF Qwen3-VL encoder whose keys already match Qwen3VLModel."""
+
+    DEFAULT_HF_REPO = Qwen3VLEncoderCheckpointLoader.DEFAULT_HF_REPO
+
+    def _load_model(
+        self,
+        config: AnyModelConfig,
+        submodel_type: Optional[SubModelType] = None,
+    ) -> AnyModel:
+        if not isinstance(config, Qwen3VLEncoder_GGUF_Config):
+            raise ValueError("Only Qwen3VLEncoder_GGUF_Config models are supported here.")
+
+        match submodel_type:
+            case SubModelType.Tokenizer:
+                return Qwen3VLEncoderCheckpointLoader._load_tokenizer(self)
+            case SubModelType.TextEncoder:
+                return self._load_text_encoder(config)
+
+        raise ValueError(
+            f"Only Tokenizer and TextEncoder submodels are supported. "
+            f"Received: {submodel_type.value if submodel_type else 'None'}"
+        )
+
+    def _load_text_encoder(self, config: Qwen3VLEncoder_GGUF_Config) -> AnyModel:
+        import torch
+        from transformers import Qwen3Config, Qwen3ForCausalLM
+
+        target_device = TorchDevice.choose_torch_device()
+        model_dtype = TorchDevice.choose_krea2_denoise_dtype(target_device)
+        sd = _remap_qwen3_text_gguf_keys(gguf_sd_loader(Path(config.path), compute_dtype=model_dtype))
+
+        layer_indices = [
+            int(key.split(".")[2])
+            for key in sd
+            if key.startswith("model.layers.") and key.split(".")[2].isdigit()
+        ]
+        layer_count = max(layer_indices, default=-1) + 1
+        embed_weight = sd.get("model.embed_tokens.weight")
+        q_proj_weight = sd.get("model.layers.1.self_attn.q_proj.weight")
+        if q_proj_weight is None:
+            q_proj_weight = sd.get("model.layers.0.self_attn.q_proj.weight")
+        k_proj_weight = sd.get("model.layers.1.self_attn.k_proj.weight")
+        if k_proj_weight is None:
+            k_proj_weight = sd.get("model.layers.0.self_attn.k_proj.weight")
+        gate_proj_weight = sd.get("model.layers.1.mlp.gate_proj.weight")
+        if gate_proj_weight is None:
+            gate_proj_weight = sd.get("model.layers.0.mlp.gate_proj.weight")
+        if embed_weight is None or q_proj_weight is None or k_proj_weight is None or gate_proj_weight is None:
+            raise RuntimeError("Qwen3 GGUF encoder is missing required embedding, attention, or MLP tensors")
+
+        embed_shape = getattr(embed_weight, "shape", getattr(embed_weight, "tensor_shape", None))
+        q_shape = getattr(q_proj_weight, "shape", getattr(q_proj_weight, "tensor_shape", None))
+        k_shape = getattr(k_proj_weight, "shape", getattr(k_proj_weight, "tensor_shape", None))
+        gate_shape = getattr(gate_proj_weight, "shape", getattr(gate_proj_weight, "tensor_shape", None))
+        head_dim = 128
+        qwen_config = Qwen3Config(
+            vocab_size=embed_shape[0],
+            hidden_size=k_shape[1],
+            intermediate_size=gate_shape[0],
+            num_hidden_layers=layer_count,
+            num_attention_heads=q_shape[0] // head_dim,
+            num_key_value_heads=k_shape[0] // head_dim,
+            head_dim=head_dim,
+            max_position_embeddings=40960,
+            rms_norm_eps=1e-6,
+            tie_word_embeddings=True,
+            rope_theta=1000000.0,
+            use_sliding_window=False,
+            attention_bias=False,
+            attention_dropout=0.0,
+            torch_dtype=model_dtype,
+        )
+        with accelerate.init_empty_weights():
+            model = Qwen3ForCausalLM(qwen_config)
+
+        # Keep GGMLTensor projections quantized. The model cache replaces Linear modules with its
+        # GGUF-aware implementations and dequantizes these weights only for the active operation.
+        model.load_state_dict(sd, assign=True, strict=False)
+
+        # Embedding lookup cannot operate on a quantized GGMLTensor, so materialize this one weight.
+        from invokeai.backend.quantization.gguf.ggml_tensor import GGMLTensor
+
+        embed_tokens_weight = model.model.embed_tokens.weight
+        if isinstance(embed_tokens_weight, GGMLTensor):
+            model.model.embed_tokens.weight = torch.nn.Parameter(
+                embed_tokens_weight.get_dequantized_tensor(), requires_grad=False
+            )
+        if model.lm_head.weight.is_meta:
+            model.lm_head.weight = model.model.embed_tokens.weight
+
+        for name, buffer in list(model.named_buffers()):
+            if not buffer.is_meta or not name.endswith("inv_freq"):
+                continue
+            parent_name, buffer_name = name.rsplit(".", 1)
+            parent = model.get_submodule(parent_name)
+            base = float(qwen_config.rope_theta)
+            head_dim = qwen_config.head_dim or qwen_config.hidden_size // qwen_config.num_attention_heads
+            inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2, dtype=torch.float32) / head_dim))
+            parent.register_buffer(buffer_name, inv_freq.to(model_dtype), persistent=False)
+
+        _reject_incomplete_load(model, what="Qwen3 text-only GGUF encoder")
+        return model
+>>>>>>> Stashed changes
