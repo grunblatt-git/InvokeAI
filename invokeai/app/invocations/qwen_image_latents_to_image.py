@@ -20,6 +20,7 @@ from invokeai.backend.krea2.vae_compat import (
     patch_qwen_image_vae_tiling,
     resolve_qwen_image_vae_tile_size,
 )
+from invokeai.backend.krea2.lighttae import LightTAE
 from invokeai.backend.stable_diffusion.extensions.seamless import SeamlessExt
 from invokeai.backend.util.devices import TorchDevice
 from invokeai.backend.util.vae_working_memory import estimate_vae_working_memory_qwen_image
@@ -113,9 +114,15 @@ class QwenImageLatentsToImageInvocation(BaseInvocation, WithMetadata, WithBoard)
                     # Drop the temporal frame dimension: (B, C, 1, H, W) -> (B, C, H, W)
                     img = img[:, :, 0]
 
-                img = img.clamp(-1, 1)
-                img = rearrange(img[0], "c h w -> h w c")
-                img_pil = Image.fromarray((127.5 * (img + 1.0)).byte().cpu().numpy())
+                if isinstance(vae, LightTAE):
+                    # LightAE/TAEHV emits RGB in [0, 1], unlike the [-1, 1] output of the full Qwen VAE.
+                    img = img.clamp(0, 1)
+                    img = rearrange(img[0], "c h w -> h w c")
+                    img_pil = Image.fromarray((255.0 * img).byte().cpu().numpy())
+                else:
+                    img = img.clamp(-1, 1)
+                    img = rearrange(img[0], "c h w -> h w c")
+                    img_pil = Image.fromarray((127.5 * (img + 1.0)).byte().cpu().numpy())
 
         TorchDevice.empty_cache()
 
