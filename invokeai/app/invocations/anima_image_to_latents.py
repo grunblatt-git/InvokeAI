@@ -30,6 +30,7 @@ from invokeai.app.invocations.model import VAEField
 from invokeai.app.invocations.primitives import LatentsOutput
 from invokeai.app.services.shared.invocation_context import InvocationContext
 from invokeai.backend.flux.modules.autoencoder import AutoEncoder as FluxAutoEncoder
+from invokeai.backend.krea2.lighttae import LightTAE
 from invokeai.backend.model_manager.load.load_base import LoadedModel
 from invokeai.backend.stable_diffusion.diffusers_pipeline import image_resized_to_grid_as_tensor
 from invokeai.backend.util.devices import TorchDevice
@@ -38,7 +39,7 @@ from invokeai.backend.util.vae_working_memory import (
     estimate_vae_working_memory_flux,
 )
 
-AnimaVAE = Union[AutoencoderKLWan, FluxAutoEncoder]
+AnimaVAE = Union[AutoencoderKLWan, FluxAutoEncoder, LightTAE]
 
 
 @invocation(
@@ -57,7 +58,7 @@ class AnimaImageToLatentsInvocation(BaseInvocation, WithMetadata, WithBoard):
 
     @staticmethod
     def vae_encode(vae_info: LoadedModel, image_tensor: torch.Tensor) -> torch.Tensor:
-        if not isinstance(vae_info.model, (AutoencoderKLWan, FluxAutoEncoder)):
+        if not isinstance(vae_info.model, (AutoencoderKLWan, FluxAutoEncoder, LightTAE)):
             raise TypeError(
                 f"Expected AutoencoderKLWan or FluxAutoEncoder for Anima VAE, got {type(vae_info.model).__name__}."
             )
@@ -77,7 +78,7 @@ class AnimaImageToLatentsInvocation(BaseInvocation, WithMetadata, WithBoard):
             )
 
         with vae_info.model_on_device(working_mem_bytes=estimated_working_memory) as (_, vae):
-            if not isinstance(vae, (AutoencoderKLWan, FluxAutoEncoder)):
+            if not isinstance(vae, (AutoencoderKLWan, FluxAutoEncoder, LightTAE)):
                 raise TypeError(f"Expected AutoencoderKLWan or FluxAutoEncoder, got {type(vae).__name__}.")
 
             vae_dtype = next(iter(vae.parameters())).dtype
@@ -88,7 +89,7 @@ class AnimaImageToLatentsInvocation(BaseInvocation, WithMetadata, WithBoard):
                     # FLUX VAE handles scaling internally
                     generator = torch.Generator(device=TorchDevice.choose_torch_device()).manual_seed(0)
                     latents = vae.encode(image_tensor, sample=True, generator=generator)
-                else:
+                elif isinstance(vae, AutoencoderKLWan):
                     # The cached VAE instance is shared with the decode invocation, which
                     # may have enabled tiling — encode untiled for exactness.
                     vae.disable_tiling()
@@ -108,6 +109,14 @@ class AnimaImageToLatentsInvocation(BaseInvocation, WithMetadata, WithBoard):
                     # Remove temporal dimension: [B, C, 1, H, W] -> [B, C, H, W]
                     if latents.ndim == 5:
                         latents = latents.squeeze(2)
+                else:
+                    if image_tensor.ndim == 4:
+                        image_tensor = image_tensor.unsqueeze(2)
+                    latents = vae.encode(image_tensor).latent_dist.mode().to(dtype=vae_dtype)
+                    latents_mean = torch.tensor(vae.config.latents_mean).view(1, -1, 1, 1, 1).to(latents)
+                    latents_std = torch.tensor(vae.config.latents_std).view(1, -1, 1, 1, 1).to(latents)
+                    latents = (latents - latents_mean) / latents_std
+                    latents = latents.squeeze(2)
 
         return latents
 
@@ -120,7 +129,7 @@ class AnimaImageToLatentsInvocation(BaseInvocation, WithMetadata, WithBoard):
             image_tensor = einops.rearrange(image_tensor, "c h w -> 1 c h w")
 
         vae_info = context.models.load(self.vae.vae)
-        if not isinstance(vae_info.model, (AutoencoderKLWan, FluxAutoEncoder)):
+        if not isinstance(vae_info.model, (AutoencoderKLWan, FluxAutoEncoder, LightTAE)):
             raise TypeError(
                 f"Expected AutoencoderKLWan or FluxAutoEncoder for Anima VAE, got {type(vae_info.model).__name__}."
             )
