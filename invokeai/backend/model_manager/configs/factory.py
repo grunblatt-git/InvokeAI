@@ -162,6 +162,7 @@ from invokeai.backend.model_manager.configs.vae import (
     VAE_Checkpoint_Anima_Config,
     VAE_Checkpoint_Flux2_Config,
     VAE_Checkpoint_FLUX_Config,
+    VAE_Checkpoint_LightTAE_Config,
     VAE_Checkpoint_QwenImage_Config,
     VAE_Checkpoint_SD1_Config,
     VAE_Checkpoint_SD2_Config,
@@ -318,6 +319,7 @@ AnyModelConfig = Annotated[
         Annotated[VAE_Checkpoint_SDXL_Config, VAE_Checkpoint_SDXL_Config.get_tag()],
         Annotated[VAE_Checkpoint_FLUX_Config, VAE_Checkpoint_FLUX_Config.get_tag()],
         Annotated[VAE_Checkpoint_Flux2_Config, VAE_Checkpoint_Flux2_Config.get_tag()],
+        Annotated[VAE_Checkpoint_LightTAE_Config, VAE_Checkpoint_LightTAE_Config.get_tag()],
         # IMPORTANT: VAE_Checkpoint_Wan_Config must be checked BEFORE QwenImage —
         # both share the AutoencoderKLWan architecture and the Wan config relies
         # on a filename heuristic to claim 16-channel files; ordering here lets
