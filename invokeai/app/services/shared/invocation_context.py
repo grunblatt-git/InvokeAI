@@ -1,7 +1,7 @@
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 from PIL.Image import Image
 from pydantic.networks import AnyHttpUrl
@@ -769,6 +769,23 @@ class UtilInterface(InvocationContextInterface):
     ) -> None:
         super().__init__(services, data)
         self._is_canceled = is_canceled
+        self._preview_vae = None
+        self._preview_vae_key: str | None = None
+
+    def _get_preview_vae(self, identifier: Any) -> Any | None:
+        if self._services.configuration.progress_preview_mode != "vae" or identifier is None:
+            return None
+
+        key = identifier.key
+        if self._preview_vae_key == key:
+            return self._preview_vae
+
+        model = self._services.model_manager.store.get_model(key)
+        self._preview_vae = self._services.model_manager.load.load_model(
+            model, SubModelType.VAE, user_id=self._data.queue_item.user_id
+        )
+        self._preview_vae_key = key
+        return self._preview_vae
 
     def is_canceled(self) -> bool:
         """Checks if the current session has been canceled.
@@ -778,7 +795,9 @@ class UtilInterface(InvocationContextInterface):
         """
         return self._is_canceled()
 
-    def sd_step_callback(self, intermediate_state: PipelineIntermediateState, base_model: BaseModelType) -> None:
+    def sd_step_callback(
+        self, intermediate_state: PipelineIntermediateState, base_model: BaseModelType, vae_identifier: Any = None
+    ) -> None:
         """
         The step callback emits a progress event with the current step, the total number of
         steps, a preview image, and some other internal metadata.
@@ -795,9 +814,10 @@ class UtilInterface(InvocationContextInterface):
             intermediate_state=intermediate_state,
             base_model=base_model,
             is_canceled=self.is_canceled,
+            vae=self._get_preview_vae(vae_identifier),
         )
 
-    def flux_step_callback(self, intermediate_state: PipelineIntermediateState) -> None:
+    def flux_step_callback(self, intermediate_state: PipelineIntermediateState, vae_identifier: Any = None) -> None:
         """
         The step callback emits a progress event with the current step, the total number of
         steps, a preview image, and some other internal metadata.
@@ -813,9 +833,10 @@ class UtilInterface(InvocationContextInterface):
             intermediate_state=intermediate_state,
             base_model=BaseModelType.Flux,
             is_canceled=self.is_canceled,
+            vae=self._get_preview_vae(vae_identifier),
         )
 
-    def flux2_step_callback(self, intermediate_state: PipelineIntermediateState) -> None:
+    def flux2_step_callback(self, intermediate_state: PipelineIntermediateState, vae_identifier: Any = None) -> None:
         """
         The step callback for FLUX.2 Klein models (32-channel VAE).
 
@@ -828,6 +849,7 @@ class UtilInterface(InvocationContextInterface):
             intermediate_state=intermediate_state,
             base_model=BaseModelType.Flux2,
             is_canceled=self.is_canceled,
+            vae=self._get_preview_vae(vae_identifier),
         )
 
     def signal_progress(

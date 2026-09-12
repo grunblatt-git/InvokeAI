@@ -3697,6 +3697,12 @@ export type components = {
              */
             transformer?: components["schemas"]["TransformerField"] | null;
             /**
+             * VAE
+             * @description VAE model to use for decoding and progress previews
+             * @default null
+             */
+            vae?: components["schemas"]["VAEField"] | null;
+            /**
              * Positive Conditioning
              * @description Positive conditioning tensor
              * @default null
@@ -19271,6 +19277,13 @@ export type components = {
              */
             image_subfolder_strategy?: "flat" | "date" | "type" | "hash";
             /**
+             * Progress Preview Mode
+             * @description How denoising progress images are generated.
+             * @default latent_rgb
+             * @enum {string}
+             */
+            progress_preview_mode?: "latent_rgb" | "vae";
+            /**
              * Custom Nodes Dir
              * Format: path
              * @description Path to directory for custom nodes.
@@ -20374,6 +20387,12 @@ export type components = {
              * @default null
              */
             transformer?: components["schemas"]["TransformerField"] | null;
+            /**
+             * VAE
+             * @description VAE model to use for decoding and progress previews
+             * @default null
+             */
+            vae?: components["schemas"]["VAEField"] | null;
             /**
              * Positive Conditioning
              * @description Positive conditioning tensor
@@ -38225,6 +38244,12 @@ export type components = {
              * @description Devices to use for parallel generation. `auto` uses every available GPU; provide an explicit list (e.g. `[cuda:0, cuda:1]`) to use specific devices. Takes effect after restarting InvokeAI.
              */
             generation_devices?: unknown;
+            /**
+             * Progress Preview Mode
+             * @description How denoising progress images are generated.
+             * @enum {string}
+             */
+            progress_preview_mode?: "latent_rgb" | "vae";
         };
         /**
          * UserDTO

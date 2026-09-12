@@ -13416,6 +13416,22 @@
             "orig_required": true,
             "title": "Transformer"
           },
+          "vae": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VAEField"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "VAE model to use for decoding and progress previews",
+            "field_kind": "input",
+            "input": "connection",
+            "orig_required": false,
+            "title": "VAE"
+          },
           "positive_conditioning": {
             "anyOf": [
               {
@@ -19194,6 +19210,22 @@
             "input": "connection",
             "orig_required": true,
             "title": "Transformer"
+          },
+          "vae": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VAEField"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "VAE model to use for decoding and progress previews",
+            "field_kind": "input",
+            "input": "connection",
+            "orig_required": false,
+            "title": "VAE"
           },
           "positive_conditioning": {
             "anyOf": [
@@ -49422,6 +49454,13 @@
             "title": "Image Subfolder Strategy",
             "description": "Strategy for organizing images into subfolders. 'flat' stores all images in a single folder. 'date' organizes by YYYY/MM/DD. 'type' organizes by image category. 'hash' uses first 2 characters of UUID for filesystem performance.",
             "default": "flat"
+          },
+          "progress_preview_mode": {
+            "type": "string",
+            "enum": ["latent_rgb", "vae"],
+            "title": "Progress Preview Mode",
+            "description": "How denoising progress images are generated.",
+            "default": "latent_rgb"
           },
           "custom_nodes_dir": {
             "type": "string",
@@ -87116,6 +87155,12 @@
           "generation_devices": {
             "title": "Generation Devices",
             "description": "Devices to use for parallel generation. `auto` uses every available GPU; provide an explicit list (e.g. `[cuda:0, cuda:1]`) to use specific devices. Takes effect after restarting InvokeAI."
+          },
+          "progress_preview_mode": {
+            "type": "string",
+            "enum": ["latent_rgb", "vae"],
+            "title": "Progress Preview Mode",
+            "description": "How denoising progress images are generated."
           }
         },
         "type": "object",

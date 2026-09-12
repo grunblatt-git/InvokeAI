@@ -1,10 +1,11 @@
 from math import floor
-from typing import Callable, Optional, TypeAlias
+from typing import Any, Callable, Optional, TypeAlias
 
 import torch
 from PIL import Image
 
 from invokeai.app.services.session_processor.session_processor_common import CanceledException
+from invokeai.backend.krea2.lighttae import LightTAE
 from invokeai.backend.model_manager.taxonomy import BaseModelType
 from invokeai.backend.stable_diffusion.diffusers_pipeline import PipelineIntermediateState
 
@@ -310,6 +311,7 @@ def diffusion_step_callback(
     intermediate_state: PipelineIntermediateState,
     base_model: BaseModelType,
     is_canceled: Callable[[], bool],
+    vae: Any | None = None,
 ) -> None:
     if is_canceled():
         raise CanceledException
@@ -321,6 +323,39 @@ def diffusion_step_callback(
         sample = intermediate_state.predicted_original
     else:
         sample = intermediate_state.latents
+
+    if vae is not None and sample.dim() in (4, 5):
+        with vae.model_on_device() as (_, vae_model):
+            vae_model.eval()
+            device = vae.compute_device
+            vae_input = sample
+            if vae_input.dim() == 4 and hasattr(vae_model.config, "latents_mean"):
+                vae_input = vae_input.unsqueeze(2)
+            vae_input = vae_input.to(device=device, dtype=next(vae_model.parameters()).dtype)
+            if hasattr(vae_model.config, "latents_mean"):
+                latents_mean = torch.tensor(vae_model.config.latents_mean, device=device, dtype=vae_input.dtype).view(
+                    1, vae_input.shape[1], 1, 1, 1
+                )
+                latents_std = torch.tensor(vae_model.config.latents_std, device=device, dtype=vae_input.dtype).view(
+                    1, vae_input.shape[1], 1, 1, 1
+                )
+                vae_input = vae_input * latents_std + latents_mean
+            else:
+                scaling_factor = getattr(vae_model.config, "scaling_factor", 1.0)
+                vae_input = vae_input / scaling_factor
+            decoded = vae_model.decode(vae_input, return_dict=False)[0]
+            if decoded.dim() == 5:
+                decoded = decoded[:, :, 0]
+            if isinstance(vae_model, LightTAE):
+                decoded = decoded.clamp(0, 1)
+            else:
+                decoded = (decoded / 2 + 0.5).clamp(0, 1)
+            image = Image.fromarray((decoded[0].cpu().permute(1, 2, 0).float().numpy() * 255).astype("uint8"))
+        width = image.width
+        height = image.height
+        percentage = calc_percentage(intermediate_state)
+        signal_progress("Denoising", percentage, image, (width, height))
+        return
 
     smooth_matrix: list[list[float]] | None = None
     latent_rgb_bias: list[float] | None = None

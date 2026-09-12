@@ -800,7 +800,8 @@ class ZImageDenoiseInvocation(BaseInvocation):
 
     def _build_step_callback(self, context: InvocationContext) -> Callable[[PipelineIntermediateState], None]:
         def step_callback(state: PipelineIntermediateState) -> None:
-            context.util.sd_step_callback(state, BaseModelType.ZImage)
+            vae_identifier = self.vae.vae if self.vae is not None else None
+            context.util.sd_step_callback(state, BaseModelType.ZImage, vae_identifier)
 
         return step_callback
 

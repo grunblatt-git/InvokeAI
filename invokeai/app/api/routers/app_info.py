@@ -148,6 +148,10 @@ class UpdateAppGenerationSettingsRequest(BaseModel):
         description="Devices to use for parallel generation. `auto` uses every available GPU; provide an explicit list (e.g. `[cuda:0, cuda:1]`) to use specific devices. Takes effect after restarting InvokeAI.",
         json_schema_extra=_remove_nullable_default_from_schema,
     )
+    progress_preview_mode: Literal["latent_rgb", "vae"] | None = Field(
+        default=None,
+        description="How denoising progress images are generated.",
+    )
 
     @field_validator("generation_devices")
     @classmethod

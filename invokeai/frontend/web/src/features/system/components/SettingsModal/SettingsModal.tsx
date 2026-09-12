@@ -110,6 +110,7 @@ const SettingsModal = (props: { children: ReactElement<{ onClick?: () => void }>
   const shouldConfirmOnNewSession = useAppSelector(selectSystemShouldConfirmOnNewSession);
   const shouldShowInvocationProgressDetail = useAppSelector(selectSystemShouldShowInvocationProgressDetail);
   const maxQueueHistory = runtimeConfig?.config.max_queue_history ?? null;
+  const useVaeForProgressImages = runtimeConfig?.config.progress_preview_mode === 'vae';
   const [maxQueueHistoryInputState, setMaxQueueHistoryInputState] = useState(() => ({
     source: maxQueueHistory,
     value: formatOptionalInteger(maxQueueHistory),
@@ -210,6 +211,15 @@ const SettingsModal = (props: { children: ReactElement<{ onClick?: () => void }>
       dispatch(shouldAntialiasProgressImageChanged(e.target.checked));
     },
     [dispatch]
+  );
+  const handleChangeUseVaeForProgressImages = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      if (!runtimeConfig || !canEditRuntimeConfig) {
+        return;
+      }
+      void updateRuntimeConfig({ progress_preview_mode: e.target.checked ? 'vae' : 'latent_rgb' });
+    },
+    [canEditRuntimeConfig, runtimeConfig, updateRuntimeConfig]
   );
   const handleChangeShouldEnableInformationalPopovers = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
@@ -357,6 +367,16 @@ const SettingsModal = (props: { children: ReactElement<{ onClick?: () => void }>
                         onChange={handleChangeShouldAntialiasProgressImage}
                       />
                     </FormControl>
+                    {canEditRuntimeConfig && (
+                      <FormControl>
+                        <FormLabel>{t('settings.useVaeForProgressImages')}</FormLabel>
+                        <Switch
+                          isChecked={useVaeForProgressImages}
+                          isDisabled={!runtimeConfig || isUpdatingRuntimeConfig}
+                          onChange={handleChangeUseVaeForProgressImages}
+                        />
+                      </FormControl>
+                    )}
                     <FormControl>
                       <FormLabel>{t('settings.showDetailedInvocationProgress')}</FormLabel>
                       <Switch

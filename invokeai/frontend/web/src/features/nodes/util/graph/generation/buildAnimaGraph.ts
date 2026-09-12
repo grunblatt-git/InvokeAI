@@ -118,6 +118,7 @@ export const buildAnimaGraph = async (arg: GraphBuilderArg): Promise<GraphBuilde
 
   // Connect model loader outputs
   g.addEdge(modelLoader, 'transformer', denoise, 'transformer');
+  g.addEdge(modelLoader, 'vae', denoise, 'vae');
   g.addEdge(modelLoader, 'qwen3_encoder', posCond, 'qwen3_encoder');
   g.addEdge(modelLoader, 'vae', l2i, 'vae');
 

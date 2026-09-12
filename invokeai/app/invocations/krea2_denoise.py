@@ -22,7 +22,7 @@ from invokeai.app.invocations.fields import (
     WithBoard,
     WithMetadata,
 )
-from invokeai.app.invocations.model import TransformerField
+from invokeai.app.invocations.model import TransformerField, VAEField
 from invokeai.app.invocations.primitives import LatentsOutput
 from invokeai.app.services.shared.invocation_context import InvocationContext
 from invokeai.backend.krea2.attention import Krea2RegionalPromptingState, build_krea2_attention_processors
@@ -78,6 +78,12 @@ class Krea2DenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
     denoising_end: float = InputField(default=1.0, ge=0, le=1, description=FieldDescriptions.denoising_end)
     transformer: TransformerField = InputField(
         description=FieldDescriptions.krea2_model, input=Input.Connection, title="Transformer"
+    )
+    vae: Optional[VAEField] = InputField(
+        default=None,
+        description=FieldDescriptions.vae,
+        input=Input.Connection,
+        title="VAE",
     )
     positive_conditioning: Krea2ConditioningField | list[Krea2ConditioningField] = InputField(
         description=FieldDescriptions.positive_cond, input=Input.Connection
@@ -504,6 +510,12 @@ class Krea2DenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
                     )
                     latents = pack_latents(latents_4d, 1, KREA2_LATENT_CHANNELS, latent_height, latent_width)
 
+                # Krea-2 uses flow matching, so the post-step latent is still a noisy sample. Estimate x0 for
+                # previews using the current velocity field; the final VAE decode receives the fully denoised latent.
+                predicted_original = unpack_latents(
+                    latents - sigmas_sched[step_idx + 1] * noise_pred, latent_height, latent_width
+                )
+
                 step_callback(
                     PipelineIntermediateState(
                         step=step_idx + 1,
@@ -511,6 +523,7 @@ class Krea2DenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
                         total_steps=total_steps,
                         timestep=int(t.item()),
                         latents=unpack_latents(latents, latent_height, latent_width),
+                        predicted_original=predicted_original,
                     ),
                 )
 
@@ -577,7 +590,7 @@ class Krea2DenoiseInvocation(BaseInvocation, WithMetadata, WithBoard):
 
     def _build_step_callback(self, context: InvocationContext) -> Callable[[PipelineIntermediateState], None]:
         def step_callback(state: PipelineIntermediateState) -> None:
-            context.util.sd_step_callback(state, BaseModelType.Krea2)
+            context.util.sd_step_callback(state, BaseModelType.Krea2, self.vae.vae if self.vae is not None else None)
 
         return step_callback
 

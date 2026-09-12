@@ -772,6 +772,6 @@ class Flux2DenoiseInvocation(BaseInvocation):
         def step_callback(state: PipelineIntermediateState) -> None:
             latents = state.latents.float()
             state.latents = unpack_flux2(latents, self.height, self.width).squeeze()
-            context.util.flux2_step_callback(state)
+            context.util.flux2_step_callback(state, self.vae.vae)
 
         return step_callback

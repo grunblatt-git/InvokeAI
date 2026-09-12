@@ -141,6 +141,7 @@ export const buildKrea2Graph = async (arg: GraphBuilderArg): Promise<GraphBuilde
   });
 
   g.addEdge(modelLoader, 'transformer', denoise, 'transformer');
+  g.addEdge(modelLoader, 'vae', denoise, 'vae');
   g.addEdge(modelLoader, 'qwen3_vl_encoder', posCond, 'qwen3_vl_encoder');
   g.addEdge(modelLoader, 'vae', l2i, 'vae');
 

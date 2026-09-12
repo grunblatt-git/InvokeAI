@@ -39,7 +39,7 @@ from invokeai.app.invocations.fields import (
     LatentsField,
 )
 from invokeai.app.invocations.latent_noise import validate_noise_tensor_shape
-from invokeai.app.invocations.model import TransformerField
+from invokeai.app.invocations.model import TransformerField, VAEField
 from invokeai.app.invocations.primitives import LatentsOutput
 from invokeai.app.services.shared.invocation_context import InvocationContext
 from invokeai.backend.anima.anima_transformer_patch import patch_anima_for_regional_prompting
@@ -205,6 +205,12 @@ class AnimaDenoiseInvocation(BaseInvocation):
     add_noise: bool = InputField(default=True, description="Add noise based on denoising start.")
     transformer: TransformerField = InputField(
         description="Anima transformer model.", input=Input.Connection, title="Transformer"
+    )
+    vae: Optional[VAEField] = InputField(
+        default=None,
+        description=FieldDescriptions.vae,
+        input=Input.Connection,
+        title="VAE",
     )
     positive_conditioning: AnimaConditioningField | list[AnimaConditioningField] = InputField(
         description=FieldDescriptions.positive_cond, input=Input.Connection
@@ -838,6 +844,7 @@ class AnimaDenoiseInvocation(BaseInvocation):
                                     total_steps=total_steps,
                                     timestep=int(it.sigma_curr * 1000),
                                     latents=latents_preview.squeeze(2),
+                                    predicted_original=latents_preview.squeeze(2),
                                 )
                             )
                     pbar.close()
@@ -888,6 +895,7 @@ class AnimaDenoiseInvocation(BaseInvocation):
                                 total_steps=total_steps,
                                 timestep=int(sigma_curr * 1000),
                                 latents=latents_preview.squeeze(2),
+                                predicted_original=latents_preview.squeeze(2),
                             ),
                         )
             finally:
@@ -928,7 +936,7 @@ class AnimaDenoiseInvocation(BaseInvocation):
 
     def _build_step_callback(self, context: InvocationContext) -> Callable[[PipelineIntermediateState], None]:
         def step_callback(state: PipelineIntermediateState) -> None:
-            context.util.sd_step_callback(state, BaseModelType.Anima)
+            context.util.sd_step_callback(state, BaseModelType.Anima, self.vae.vae if self.vae is not None else None)
 
         return step_callback
 
