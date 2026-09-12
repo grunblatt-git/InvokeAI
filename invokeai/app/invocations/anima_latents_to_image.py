@@ -28,6 +28,7 @@ from invokeai.app.invocations.model import VAEField
 from invokeai.app.invocations.primitives import ImageOutput
 from invokeai.app.services.shared.invocation_context import InvocationContext
 from invokeai.backend.flux.modules.autoencoder import AutoEncoder as FluxAutoEncoder
+from invokeai.backend.krea2.lighttae import LightTAE
 from invokeai.backend.util.devices import TorchDevice
 from invokeai.backend.util.vae_working_memory import (
     estimate_vae_working_memory_anima,
@@ -80,8 +81,7 @@ def _is_oom_error(e: RuntimeError) -> bool:
 class AnimaLatentsToImageInvocation(BaseInvocation, WithMetadata, WithBoard):
     """Generates an image from latents using the Anima VAE.
 
-    Supports the Wan 2.1 QwenImage VAE (AutoencoderKLWan) with explicit
-    latent denormalization, and FLUX VAE as fallback.
+    Supports the Wan 2.1 QwenImage VAE (AutoencoderKLWan), LightTAE, and FLUX VAE.
     """
 
     latents: LatentsField = InputField(description=FieldDescriptions.latents, input=Input.Connection)
@@ -111,13 +111,14 @@ class AnimaLatentsToImageInvocation(BaseInvocation, WithMetadata, WithBoard):
         latents = context.tensors.load(self.latents.latents_name)
 
         vae_info = context.models.load(self.vae.vae)
-        if not isinstance(vae_info.model, (AutoencoderKLWan, FluxAutoEncoder)):
+        if not isinstance(vae_info.model, (AutoencoderKLWan, FluxAutoEncoder, LightTAE)):
             raise TypeError(
-                f"Expected AutoencoderKLWan or FluxAutoEncoder for Anima VAE, got {type(vae_info.model).__name__}."
+                f"Expected AutoencoderKLWan, LightTAE, or FluxAutoEncoder for Anima VAE, got "
+                f"{type(vae_info.model).__name__}."
             )
 
         use_tiling = False
-        if isinstance(vae_info.model, AutoencoderKLWan):
+        if isinstance(vae_info.model, (AutoencoderKLWan, LightTAE)):
             full_decode_working_memory = estimate_vae_working_memory_anima(
                 operation="decode",
                 image_tensor=latents,
@@ -140,8 +141,8 @@ class AnimaLatentsToImageInvocation(BaseInvocation, WithMetadata, WithBoard):
 
         with vae_info.model_on_device(working_mem_bytes=estimated_working_memory) as (_, vae):
             context.util.signal_progress("Running Anima VAE decode")
-            if not isinstance(vae, (AutoencoderKLWan, FluxAutoEncoder)):
-                raise TypeError(f"Expected AutoencoderKLWan or FluxAutoEncoder, got {type(vae).__name__}.")
+            if not isinstance(vae, (AutoencoderKLWan, FluxAutoEncoder, LightTAE)):
+                raise TypeError(f"Expected AutoencoderKLWan, LightTAE, or FluxAutoEncoder, got {type(vae).__name__}.")
 
             vae_dtype = next(iter(vae.parameters())).dtype
             # Use the VAE's intended compute device (CUDA/MPS, or CPU if configured cpu_only). Do NOT infer it from
@@ -155,7 +156,7 @@ class AnimaLatentsToImageInvocation(BaseInvocation, WithMetadata, WithBoard):
                 if isinstance(vae, FluxAutoEncoder):
                     # FLUX VAE handles scaling internally, expects 4D [B, C, H, W]
                     img = vae.decode(latents)
-                else:
+                elif isinstance(vae, AutoencoderKLWan):
                     # The cached VAE instance is shared across invocations, so always set
                     # the tiling state explicitly rather than leaving it as-is.
                     if use_tiling:
@@ -194,14 +195,28 @@ class AnimaLatentsToImageInvocation(BaseInvocation, WithMetadata, WithBoard):
                         )
                         decoded = vae.decode(latents, return_dict=False)[0]
 
+                else:
+                    if latents.ndim == 4:
+                        latents = latents.unsqueeze(2)
+                    latents_mean = torch.tensor(vae.config.latents_mean).view(1, -1, 1, 1, 1).to(latents)
+                    latents_std = torch.tensor(vae.config.latents_std).view(1, -1, 1, 1, 1).to(latents)
+                    latents = latents * latents_std + latents_mean
+                    decoded = vae.decode(latents)[0]
+
+                if not isinstance(vae, FluxAutoEncoder):
                     # Output is 5D [B, C, T, H, W] — squeeze temporal dim
                     if decoded.ndim == 5:
                         decoded = decoded.squeeze(2)
                     img = decoded
 
-            img = img.clamp(-1, 1)
-            img = rearrange(img[0], "c h w -> h w c")
-            img_pil = Image.fromarray((127.5 * (img + 1.0)).byte().cpu().numpy())
+            if isinstance(vae, LightTAE):
+                img = img.clamp(0, 1)
+                img = rearrange(img[0], "c h w -> h w c")
+                img_pil = Image.fromarray((255.0 * img).byte().cpu().numpy())
+            else:
+                img = img.clamp(-1, 1)
+                img = rearrange(img[0], "c h w -> h w c")
+                img_pil = Image.fromarray((127.5 * (img + 1.0)).byte().cpu().numpy())
 
         TorchDevice.empty_cache()
 
