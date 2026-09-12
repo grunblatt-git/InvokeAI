@@ -361,6 +361,34 @@ def _has_anima_vae_keys(state_dict: dict[str | int, Any]) -> bool:
     return all(any(str(k).startswith(prefix) for k in state_dict) for prefix in required_prefixes)
 
 
+def _is_lighttae(state_dict: dict[str | int, Any]) -> bool:
+    """Identify the sequential encoder/decoder layout used by LightTAE for Wan 2.1."""
+    return (
+        "encoder.0.weight" in state_dict
+        and "decoder.22.weight" in state_dict
+        and "decoder.22.bias" in state_dict
+        and getattr(state_dict["encoder.0.weight"], "shape", None) == (64, 3, 3, 3)
+        and getattr(state_dict["decoder.22.bias"], "shape", None) == (3,)
+    )
+
+
+class VAE_Checkpoint_LightTAE_Config(Checkpoint_Config_Base, Config_Base):
+    """Model config for the LightTAE Wan 2.1 approximation VAE."""
+
+    type: Literal[ModelType.VAE] = Field(default=ModelType.VAE)
+    format: Literal[ModelFormat.Checkpoint] = Field(default=ModelFormat.Checkpoint)
+    base: Literal[BaseModelType.QwenImage] = Field(default=BaseModelType.QwenImage)
+    cpu_only: bool | None = Field(default=None, description="Whether this model should run on CPU only")
+
+    @classmethod
+    def from_model_on_disk(cls, mod: ModelOnDisk, override_fields: dict[str, Any]) -> Self:
+        raise_if_not_file(mod)
+        raise_for_override_fields(cls, override_fields)
+        if not _is_lighttae(mod.load_state_dict()):
+            raise NotAMatchError("model does not match LightTAE checkpoint heuristics")
+        return cls(**override_fields)
+
+
 class VAE_Checkpoint_Anima_Config(Checkpoint_Config_Base, Config_Base):
     """Model config for Anima QwenImage VAE checkpoint models (AutoencoderKLQwenImage)."""
 

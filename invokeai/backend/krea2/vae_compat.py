@@ -18,7 +18,9 @@ from typing import Any
 from diffusers.models.autoencoders import AutoencoderKLWan
 from diffusers.models.autoencoders.autoencoder_kl_qwenimage import AutoencoderKLQwenImage
 
-QwenImageCompatibleVAE = AutoencoderKLQwenImage | AutoencoderKLWan
+from invokeai.backend.krea2.lighttae import LightTAE
+
+QwenImageCompatibleVAE = AutoencoderKLQwenImage | AutoencoderKLWan | LightTAE
 
 
 # The Qwen-Image VAE is a 16-channel, 8x-spatial, non-patchified autoencoder. A Wan VAE can only share the
@@ -42,6 +44,8 @@ def as_qwen_image_vae(model: Any) -> QwenImageCompatibleVAE:
     loading before this helper is called, and rebuilding the module from its state dict would discard
     those modules along with any hooks or layerwise-casting configuration.
     """
+    if isinstance(model, LightTAE):
+        return model
     if isinstance(model, AutoencoderKLQwenImage):
         return model
     if not isinstance(model, AutoencoderKLWan):
@@ -122,6 +126,12 @@ def patch_qwen_image_vae_tiling(vae: QwenImageCompatibleVAE, tile_size: int | No
 
     ``tile_size=None`` disables tiling for the block.
     """
+    if isinstance(vae, LightTAE):
+        if tile_size is not None:
+            raise ValueError("LightTAE does not support tiled encode/decode.")
+        yield
+        return
+
     original = (
         vae.use_tiling,
         vae.tile_sample_min_height,

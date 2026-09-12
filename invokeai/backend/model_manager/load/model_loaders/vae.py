@@ -11,6 +11,8 @@ from invokeai.backend.model_manager.configs.factory import AnyModelConfig
 from invokeai.backend.model_manager.configs.vae import (
     VAE_Checkpoint_Anima_Config,
     VAE_Checkpoint_Config_Base,
+    VAE_Checkpoint_LightTAE_Config,
+    _is_lighttae,
     VAE_Checkpoint_QwenImage_Config,
     VAE_Checkpoint_Wan_Config,
     VAE_Diffusers_Wan_Config,
@@ -176,6 +178,14 @@ class VAELoader(GenericDiffusersLoader):
         submodel_type: Optional[SubModelType] = None,
     ) -> AnyModel:
         if isinstance(config, VAE_Checkpoint_Anima_Config):
+            # Model records created before LightTAE support may retain the Anima config even though
+            # the checkpoint is a sequential LightTAE VAE. Detect that stale classification from the
+            # weights before handing the file to AutoencoderKLWan.from_single_file().
+            from safetensors.torch import load_file
+
+            if _is_lighttae(load_file(config.path)):
+                return self._load_lighttae(config)
+
             from diffusers.models.autoencoders import AutoencoderKLWan
 
             from invokeai.backend.wan.rocm_causal_conv3d import patch_wan_causal_conv3d_for_rocm
@@ -185,6 +195,8 @@ class VAELoader(GenericDiffusersLoader):
                 config.path,
                 torch_dtype=self._torch_dtype,
             )
+        elif isinstance(config, VAE_Checkpoint_LightTAE_Config):
+            return self._load_lighttae(config)
         elif isinstance(config, VAE_Checkpoint_Wan_Config):
             return self._load_wan_vae(config)
         elif isinstance(config, VAE_Diffusers_Wan_Config):
@@ -204,6 +216,19 @@ class VAELoader(GenericDiffusersLoader):
             return self._load_sdnq_vae(model_path)
 
         return super()._load_model(config, submodel_type)
+
+    def _load_lighttae(self, config: VAE_Checkpoint_LightTAE_Config) -> AnyModel:
+        """Load a LightTAE checkpoint using its native sequential TAEHV architecture."""
+        from safetensors.torch import load_file
+
+        from invokeai.backend.krea2.lighttae import LightTAE
+
+        state_dict = load_file(config.path)
+        model = LightTAE(latent_channels=state_dict["decoder.1.weight"].shape[1])
+        self._ram_cache.make_room(sum(t.nelement() * t.element_size() for t in state_dict.values()))
+        model.load_state_dict(state_dict, strict=True, assign=True)
+        model.eval()
+        return model
 
     def _load_wan_vae(self, config: VAE_Checkpoint_Wan_Config) -> AnyModel:
         """Load a Wan 2.2 VAE from a single safetensors file.
